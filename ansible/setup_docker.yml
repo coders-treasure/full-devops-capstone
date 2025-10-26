@@ -1,0 +1,29 @@
+# ansible/setup_docker.yml
+---
+- name: Install Docker and Configure User Permissions
+  hosts: webservers
+  become: yes
+  gather_facts: yes
+
+  tasks:
+    - name: 1. Update apt package cache
+      ansible.builtin.apt:
+        update_cache: yes
+            
+    - name: 2. Install Docker Engine and Dependencies
+      ansible.builtin.apt:
+        name: ['docker.io', 'python3-pip'] # Simple Ubuntu package name
+        state: present
+        update_cache: yes
+
+    - name: 3. Start Docker Service
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: 4. Add 'ubuntu' user to docker group
+      ansible.builtin.user:
+        name: ubuntu
+        groups: docker
+        append: yes

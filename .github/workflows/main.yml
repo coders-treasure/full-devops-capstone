@@ -1,0 +1,111 @@
+name: CAPSTONE: Full End-to-End CI/CD Pipeline
+
+on:
+  push:
+    branches: [master, main]
+  workflow_dispatch: # Allows manual running
+
+jobs:
+  # --- 1. PROVISION INFRASTRUCTURE (IaC) ---
+  provision:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.1.9
+
+      - name: Terraform Init and Apply
+        id: apply
+        run: |
+          cd terraform
+          terraform init
+          # We use a plan file to avoid sensitive input on the command line
+          terraform apply -auto-approve -var="key_name=${{ secrets.SSH_KEY_NAME }}"
+        
+      - name: Get Server Public IP
+        id: output
+        run: |
+          cd terraform
+          SERVER_IP=$(terraform output -json server_public_ip | jq -r .)
+          echo "SERVER_IP=$SERVER_IP" >> $GITHUB_OUTPUT
+
+    outputs:
+      server_ip: ${{ steps.output.outputs.SERVER_IP }}
+      
+  # --- 2. BUILD, TEST, & PUSH IMAGE (CI) ---
+  build_and_push:
+    runs-on: ubuntu-latest
+    needs: provision
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_TOKEN }}
+
+      - name: Build and Push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: application # Build from the application folder
+          push: true
+          tags: ${{ secrets.DOCKER_USERNAME }}/capstone-flask-app:latest
+          
+  # --- 3. CONFIGURE SERVER (Ansible) ---
+  configure_server:
+    runs-on: ubuntu-latest
+    needs: provision
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Ansible
+        run: pip install ansible
+        
+      - name: Write Inventory File Dynamically
+        run: |
+          echo "[webservers]" > inventory.ini
+          echo "ec2-server ansible_host=${{ needs.provision.outputs.server_ip }} ansible_user=ubuntu ansible_ssh_private_key_file=id_rsa" >> inventory.ini
+        
+      - name: Run Ansible Playbook (Install Docker Reliably)
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ needs.provision.outputs.server_ip }}
+          username: ubuntu
+          key: ${{ secrets.AWS_KEY }}
+          script: |
+            # Execute the Ansible Playbook via SSH (simulating remote Ansible execution)
+            # This is complex, but the fastest way without advanced setup
+            ansible-playbook -i inventory.ini ansible/setup_docker.yml --key-file ~/.ssh/id_rsa
+            
+  # --- 4. DEPLOY APPLICATION (CD) ---
+  deploy:
+    runs-on: ubuntu-latest
+    needs: [configure_server, build_and_push] # Waits for configuration AND image build
+    steps:
+      - name: Deploy Docker Container via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ needs.provision.outputs.server_ip }}
+          username: ubuntu
+          key: ${{secrets.AWS_KEY}}
+          
+          script: |
+            echo "--- Starting Final Application Deployment ---"
+            
+            IMAGE_TAG=${{ secrets.DOCKER_USERNAME }}/capstone-flask-app:latest
+            
+            # Stop and remove old container safely (using the full path if necessary)
+            /usr/bin/docker stop capstone-flask-app || true 
+            /usr/bin/docker rm capstone-flask-app || true
+            
+            # Pull and run the image
+            /usr/bin/docker run -d \
+              --name capstone-flask-app \
+              -p 80:5000 \
+              $IMAGE_TAG
+            
+            echo "Deployment to EC2 complete. Application is live."
