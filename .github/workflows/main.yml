@@ -66,10 +66,9 @@ jobs:
           tags: ${{ secrets.DOCKER_USERNAME }}/capstone-flask-app:latest
           
   # --- 3. DEPLOY & CONFIGURE (CD) ---
-  # This job handles both configuration (Docker install) and deployment
   deploy:
     runs-on: ubuntu-latest
-    needs: [provision, build_and_push] # Waits for server IP and image build
+    needs: [provision, build_and_push] 
     steps:
       - name: Install Docker and Deploy Container via SSH
         uses: appleboy/ssh-action@v1.0.3
@@ -87,7 +86,7 @@ jobs:
             sudo apt install -y docker.io
             sudo systemctl start docker
             
-            # Add user and activate permissions (needed for subsequent runs)
+            # Add user and activate permissions 
             sudo usermod -aG docker ubuntu
             
             # 2. LOG IN TO DOCKER HUB

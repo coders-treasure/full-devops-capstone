@@ -1,4 +1,4 @@
-# --- CONFIGURATION AND PROVIDER SETUP ---
+# --- 1. CONFIGURATION AND PROVIDER SETUP ---
 terraform {
   required_providers {
     aws = {
@@ -12,24 +12,51 @@ provider "aws" {
   region = "us-east-1"
 }
 
-# --- DATA SOURCE: DYNAMIC AMI FINDER ---
+# --- 2. DATA SOURCE: DYNAMIC AMI FINDER ---
 data "aws_ami" "ubuntu" {
   most_recent = true
   owners = ["099720109477"]
-  filter { name = "name" values = ["ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*"] }
-  filter { name = "virtualization-type" values = ["hvm"] }
+  filter { 
+    name = "name" 
+    values = ["ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*"] 
+  }
+  filter { 
+    name = "virtualization-type" 
+    values = ["hvm"] 
+  }
 }
 
-# --- RESOURCE: SECURITY GROUP (FIREWALL) ---
+# --- 3. RESOURCE: SECURITY GROUP (FIREWALL) ---
 resource "aws_security_group" "app_sg" {
   name        = "capstone-flask-sg"
   description = "Security Group for Flask application server"
-  ingress { from_port = 22; to_port = 22; protocol = "tcp"; cidr_blocks = ["0.0.0.0/0"] }
-  ingress { from_port = 80; to_port = 80; protocol = "tcp"; cidr_blocks = ["0.0.0.0/0"] }
-  egress { from_port = 0; to_port = 0; protocol = "-1"; cidr_blocks = ["0.0.0.0/0"] }
+  
+  # Allow SSH (Port 22) for management
+  ingress { 
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"] 
+  }
+  
+  # Allow HTTP (Port 80) for the public web app access
+  ingress { 
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"] 
+  }
+  
+  # Allow all outbound traffic
+  egress { 
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"] 
+  }
 }
 
-# --- RESOURCE: EC2 INSTANCE (THE SERVER) ---
+# --- 4. RESOURCE: EC2 INSTANCE (THE SERVER) ---
 resource "aws_instance" "app_server" {
   ami           = data.aws_ami.ubuntu.id 
   instance_type = var.instance_type 
@@ -38,7 +65,7 @@ resource "aws_instance" "app_server" {
   tags = { Name = "Capstone-Server" }
 }
 
-# --- OUTPUTS ---
+# --- 5. OUTPUTS ---
 output "server_public_ip" {
   description = "The public IP address of the Capstone-Server"
   value       = aws_instance.app_server.public_ip
