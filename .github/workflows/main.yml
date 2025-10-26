@@ -1,4 +1,4 @@
-name: CAPSTONE: Full End-to-End CI/CD Pipeline
+name: CAPSTONE-Full End-to-End CI/CD Pipeline
 
 on:
   push:
