@@ -3,20 +3,25 @@ name: CAPSTONE: Full End-to-End CI/CD Pipeline
 on:
   push:
     branches: [master, main]
-  workflow_dispatch: # Allows manual running
+  workflow_dispatch:
 
 jobs:
   # --- 1. PROVISION INFRASTRUCTURE (IaC) ---
   provision:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: aws-actions/configure-aws-credentials@v4
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
-      - uses: hashicorp/setup-terraform@v3
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.1.9
 
@@ -25,13 +30,15 @@ jobs:
         run: |
           cd terraform
           terraform init
-          # We use a plan file to avoid sensitive input on the command line
+          # Apply the configuration to launch the EC2 instance
+          # Uses the SSH_KEY_NAME secret (your AWS Key Pair Name)
           terraform apply -auto-approve -var="key_name=${{ secrets.SSH_KEY_NAME }}"
-        
+
       - name: Get Server Public IP
         id: output
         run: |
           cd terraform
+          # Extract the IP from the Terraform state output using 'jq' (JSON parser)
           SERVER_IP=$(terraform output -json server_public_ip | jq -r .)
           echo "SERVER_IP=$SERVER_IP" >> $GITHUB_OUTPUT
 
@@ -43,8 +50,13 @@ jobs:
     runs-on: ubuntu-latest
     needs: provision
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/login-action@v3
+      - name: Checkout App Code
+        uses: actions/checkout@v4
+        with:
+          path: application # Only check out the app files needed for the build
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_TOKEN }}
@@ -61,25 +73,37 @@ jobs:
     runs-on: ubuntu-latest
     needs: provision
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Configuration Files
+        uses: actions/checkout@v4
+        
       - name: Install Ansible
         run: pip install ansible
-        
-      - name: Write Inventory File Dynamically
-        run: |
-          echo "[webservers]" > inventory.ini
-          echo "ec2-server ansible_host=${{ needs.provision.outputs.server_ip }} ansible_user=ubuntu ansible_ssh_private_key_file=id_rsa" >> inventory.ini
-        
+
       - name: Run Ansible Playbook (Install Docker Reliably)
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ needs.provision.outputs.server_ip }}
           username: ubuntu
-          key: ${{ secrets.AWS_KEY }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }} # Uses the content of the private key
+          
+          # This script executes the setup_docker.yml playbook remotely via SSH
           script: |
-            # Execute the Ansible Playbook via SSH (simulating remote Ansible execution)
-            # This is complex, but the fastest way without advanced setup
-            ansible-playbook -i inventory.ini ansible/setup_docker.yml --key-file ~/.ssh/id_rsa
+            echo "--- Starting Configuration Management (Ansible) ---"
+            
+            # Navigate to the home directory for reliable execution
+            cd /home/ubuntu
+            
+            # Install git and copy configuration files to the EC2 instance
+            sudo apt update && sudo apt install -y git
+            git clone https://github.com/${{ github.repository }}.git /tmp/repo
+            
+            # Execute the Ansible playbook locally on the EC2 instance
+            # This is complex but ensures all dependencies are met
+            ansible-playbook /tmp/repo/ansible/setup_docker.yml \
+              --connection=local --inventory 127.0.0.1, \
+              -e "ansible_python_interpreter=/usr/bin/python3"
+            
+            echo "Ansible configuration complete."
             
   # --- 4. DEPLOY APPLICATION (CD) ---
   deploy:
@@ -91,14 +115,14 @@ jobs:
         with:
           host: ${{ needs.provision.outputs.server_ip }}
           username: ubuntu
-          key: ${{secrets.AWS_KEY}}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
           
           script: |
             echo "--- Starting Final Application Deployment ---"
             
             IMAGE_TAG=${{ secrets.DOCKER_USERNAME }}/capstone-flask-app:latest
             
-            # Stop and remove old container safely (using the full path if necessary)
+            # Stop and remove old container safely
             /usr/bin/docker stop capstone-flask-app || true 
             /usr/bin/docker rm capstone-flask-app || true
             
