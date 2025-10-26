@@ -49,8 +49,7 @@ jobs:
     steps:
       - name: Checkout Application Code
         uses: actions/checkout@v4
-        with:
-          path: application
+        
 
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
@@ -61,8 +60,8 @@ jobs:
       - name: Build and Push Docker image
         uses: docker/build-push-action@v5
         with:
-          context: application
-          file: Dockerfile
+          context: ./application
+          file: ./application/Dockerfile
           push: true
           tags: ${{ secrets.DOCKER_USERNAME }}/capstone-flask-app:latest
           
